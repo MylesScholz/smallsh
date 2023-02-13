@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS := --std=gnu99
 
 BINDIR = .
-exe_file = "movies_by_year"
+exe_file = "smallsh"
 
 DEBUG ?= 1
 ifeq ($(DEBUG), 1)
