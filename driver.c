@@ -7,6 +7,8 @@ struct command {
 	char* cmd;
 	int argc;
 	char* argv[512];
+	char* i_file, * o_file;
+	bool background;
 };
 
 void free_command(struct command* cmd) {
@@ -23,11 +25,15 @@ struct command* get_cmd() {
 	struct command* cmd = (struct command*) malloc(sizeof(struct command));
 	if (cmd == NULL) return NULL;
 	
-	printf(": ");	
+	printf(": ");
+
 	char cmd_buf[2049];
-	fflush(stdin);
-	fgets(cmd_buf, 2049, stdin);
-	
+
+	char* buffer = NULL;
+	size_t buffer_size = 0;
+	getline(&buffer, &buffer_size, stdin);
+	strncpy(cmd_buf, buffer, 2048);
+
 	cmd_buf[strlen(cmd_buf) - 1] = '\0';
 
 	char* token, * saveptr;
@@ -36,6 +42,7 @@ struct command* get_cmd() {
 	strncpy(cmd->cmd, token, strlen(token) + 1);
 
 	token = strtok_r(NULL, " ", &saveptr);
+	cmd->argc = 0;
 	while (token != NULL) {
 		cmd->argv[cmd->argc] = (char*) malloc(sizeof(char) * (strlen(token) + 1));
 		strncpy(cmd->argv[cmd->argc], token, strlen(token) + 1);
@@ -51,6 +58,7 @@ int main(int argc, char** argv) {
 	struct command* cmd;
 	while(true) {
 		cmd = get_cmd();
+		if (cmd == NULL) continue;
 
 		printf("cmd: %s\targs: ", cmd->cmd);
 		for (int i = 0; i < cmd->argc; i++) {
