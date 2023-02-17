@@ -2,8 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #define FILE_NAME_MAX 255
+#define PATH_LEN_MAX 4095
 
 struct command {
 	char* cmd;
@@ -80,24 +82,41 @@ struct command* get_cmd() {
 	return cmd;
 }
 
+int cd(struct command* cmd) {
+	if (cmd == NULL) return -1;
+
+	int err;
+	if (cmd->argc > 0) {
+		err = chdir(cmd->argv[0]);
+	} else {
+		err = chdir(getenv("HOME"));
+	}
+	
+	if (err == -1) {
+		perror("");
+		return -1;
+	}
+
+	return 0;
+}
+
 int main(int argc, char** argv) {
 	struct command* cmd;
 	while(true) {
 		cmd = get_cmd();
 		if (cmd == NULL) continue;
 
-		printf("cmd: %s\targs: ", cmd->cmd);
-		for (int i = 0; i < cmd->argc; i++) {
-			printf("%s, ", cmd->argv[i]);
-		}
-		printf("\ni_file: %s\to_file: %s\tbackground: %d\n", cmd->i_file, cmd->o_file, cmd->background);
-
 		if (strcmp(cmd->cmd, "#") == 0) {
 			free_command(cmd);
 			continue;
 		}
+
+		if (strcmp(cmd->cmd, "cd") == 0) {
+			cd(cmd);
+		}
 	
 		if (strcmp(cmd->cmd, "exit") == 0) {
+			// TODO: kill all processes
 			break;
 		} else {
 			free_command(cmd);

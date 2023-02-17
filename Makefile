@@ -29,7 +29,7 @@ $(BUILDDIR)/%.d: $(SRCDIR)/%.$(SRCEXT)
 	@$(CC) $(INC) $< -MM -MT $(@:.d=.o) >$@
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.$(SRCEXT)
-	$(CC) $(CFLAGS) $(INC) -c -o $@ $< -w
+	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 
 .PHONY: clean
 clean:
