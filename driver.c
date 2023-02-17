@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 #define FILE_NAME_MAX 255
 #define PATH_LEN_MAX 4095
@@ -102,9 +103,17 @@ int cd(struct command* cmd) {
 
 int main(int argc, char** argv) {
 	struct command* cmd;
+	int (*fptr) (struct command*);
+	int last_exit_status = 0;
+
 	while(true) {
 		cmd = get_cmd();
 		if (cmd == NULL) continue;
+		
+		if (strcmp(cmd->cmd, "exit") == 0) {
+			// TODO: kill all processes
+			break;
+		}
 
 		if (strcmp(cmd->cmd, "#") == 0) {
 			free_command(cmd);
@@ -112,15 +121,46 @@ int main(int argc, char** argv) {
 		}
 
 		if (strcmp(cmd->cmd, "cd") == 0) {
-			cd(cmd);
+			fptr = &cd;
 		}
-	
-		if (strcmp(cmd->cmd, "exit") == 0) {
-			// TODO: kill all processes
-			break;
-		} else {
-			free_command(cmd);
+		
+		if (strcmp(cmd->cmd, "status") == 0) {
+			// TODO: status cmd
 		}
+
+		// TODO: undefined cmds
+
+		pid_t spawn_pid = -5;
+		int child_pid, child_status, cmd_status;
+		
+		spawn_pid = fork();
+		switch (spawn_pid) {
+			case -1:
+				perror("");
+				exit(1);
+				break;
+			case 0:
+				cmd_status = (*fptr) (cmd);
+				
+				if (cmd_status == -1) {
+					return EXIT_FAILURE;
+				}
+				return EXIT_SUCCESS;
+				break;
+			default:
+				child_pid = waitpid(spawn_pid, &child_status, 0);
+				
+				if (WIFEXITED(child_status)) {
+					printf("Child exited normally with status %d.\n", WEXITSTATUS(child_status));
+					last_exit_status = WEXITSTATUS(child_status);
+				} else {
+					printf("Child exited abnormally by signal %d.\n", WTERMSIG(child_status));
+					last_exit_status = WEXITSTATUS(child_status);
+				}
+				break;
+		}
+
+		free_command(cmd);
 	}
 
 	return EXIT_SUCCESS;
