@@ -34,10 +34,13 @@ struct command* get_cmd() {
 	char* buffer = NULL;
 	size_t buffer_size = 0;
 	getline(&buffer, &buffer_size, stdin);
+	
+	if (strlen(buffer) == 1) return NULL;
+
 	strncpy(cmd_buf, buffer, 2048);
 
 	cmd_buf[strlen(cmd_buf) - 1] = '\0';
-
+	
 	char* token, * saveptr;
 	token = strtok_r(cmd_buf, " ", &saveptr);
 	cmd->cmd = (char*) malloc(sizeof(char) * (strlen(token) + 1));
@@ -89,6 +92,11 @@ int main(int argc, char** argv) {
 		}
 		printf("\ni_file: %s\to_file: %s\tbackground: %d\n", cmd->i_file, cmd->o_file, cmd->background);
 
+		if (strcmp(cmd->cmd, "#") == 0) {
+			free_command(cmd);
+			continue;
+		}
+	
 		if (strcmp(cmd->cmd, "exit") == 0) {
 			break;
 		} else {
