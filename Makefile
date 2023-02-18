@@ -24,11 +24,11 @@ $(exe_file): $(OBJS)
 	@mkdir -p $(BINDIR)
 	$(CC) -o $(exe_file) $^ $(LIB) $(LDFLAGS) -lm
 
-$(BUILDDIR)/%.d: $(SRCDIR)/%.$(SRCEXT)
+$(BUILDDIR)/%.d: $(SRCDIR)/$(SRCS)
 	@mkdir -p $(BUILDDIR)
 	@$(CC) $(INC) $< -MM -MT $(@:.d=.o) >$@
 
-$(BUILDDIR)/%.o: $(SRCDIR)/%.$(SRCEXT)
+$(BUILDDIR)/%.o: $(SRCDIR)/$(SRCS)
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 
 .PHONY: clean

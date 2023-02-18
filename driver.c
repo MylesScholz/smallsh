@@ -105,7 +105,7 @@ int cd(struct command* cmd) {
 	return 0;
 }
 
-int status(struct command* cmd) {
+int status(int last_exit_status) {
 	printf("Status.\n");
 	return 0;
 }
@@ -129,24 +129,28 @@ int main(int argc, char** argv) {
 			continue;
 		}
 
-		strcpy(cmd_path, "/bin/");
-
 		if (strcmp(cmd->cmd, "cd") == 0) {
-			strcpy(cmd_path, "cd");
-		} else if (strcmp(cmd->cmd, "status") == 0) {
-			strcpy(cmd_path, "status");
-			// TODO: implement status
-		} else {
-			strcat(cmd_path, cmd->cmd);
-
-			free(cmd->cmd);
-			cmd->cmd = (char*) malloc(sizeof(char) * (strlen(cmd_path) + 1));
-			strncpy(cmd->cmd, cmd_path, strlen(cmd_path) + 1);
-
-			free(cmd->argv[0]);
-			cmd->argv[0] = (char*) malloc(sizeof(char) * (strlen(cmd_path) + 1));
-			strncpy(cmd->argv[0], cmd_path, strlen(cmd_path) + 1);
+			cd(cmd);
+			free_command(cmd);
+			continue;
 		}
+
+		if (strcmp(cmd->cmd, "status") == 0) {
+			status(last_exit_status);
+			free_command(cmd);
+			continue;
+		}
+
+		strcpy(cmd_path, "/bin/");
+		strcat(cmd_path, cmd->cmd);
+
+		free(cmd->cmd);
+		cmd->cmd = (char*) malloc(sizeof(char) * (strlen(cmd_path) + 1));
+		strncpy(cmd->cmd, cmd_path, strlen(cmd_path) + 1);
+
+		free(cmd->argv[0]);
+		cmd->argv[0] = (char*) malloc(sizeof(char) * (strlen(cmd_path) + 1));
+		strncpy(cmd->argv[0], cmd_path, strlen(cmd_path) + 1);
 
 		pid_t spawn_pid = -5;
 		int child_pid, child_status;
