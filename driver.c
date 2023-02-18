@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <math.h>
 #include <unistd.h>
 #include <sys/wait.h>
 
@@ -22,30 +23,15 @@ void free_command(struct command* cmd) {
 	for (int i = 0; i < cmd->argc; i++) {
 		free(cmd->argv[i]);
 	}
-
+	
+	free(cmd);
 	return;
 }
 
-struct command* get_cmd() {
-	struct command* cmd = (struct command*) malloc(sizeof(struct command));
-	if (cmd == NULL) return NULL;
-	
-	printf(": ");
-
-	char cmd_buf[2049];
-
-	char* buffer = NULL;
-	size_t buffer_size = 0;
-	getline(&buffer, &buffer_size, stdin);
-	
-	if (strlen(buffer) == 1) return NULL;
-
-	strncpy(cmd_buf, buffer, 2048);
-
-	cmd_buf[strlen(cmd_buf) - 1] = '\0';
-	
+struct command* parse_cmd_args(struct command* cmd, char** cmd_buf) {
 	char* token, * saveptr;
-	token = strtok_r(cmd_buf, " ", &saveptr);
+	
+	token = strtok_r(*cmd_buf, " ", &saveptr);
 	cmd->cmd = (char*) malloc(sizeof(char) * (strlen(token) + 1));
 	strncpy(cmd->cmd, token, strlen(token) + 1);
 	
@@ -62,11 +48,10 @@ struct command* get_cmd() {
 		token = strtok_r(NULL, " ", &saveptr);
 	}
 
-	if (strcmp(cmd->argv[cmd->argc - 1], "&") == 0) {
-		cmd->background = true;
-		cmd->argv[cmd->argc - 1] = NULL;
-	}
+	return cmd;
+}
 
+struct command* parse_cmd_io_files(struct command* cmd) {
 	for (int i = 1; i < cmd->argc - 1; i++) {
 		char* arg = cmd->argv[i];
 
@@ -92,10 +77,55 @@ struct command* get_cmd() {
 			i++;
 		}
 	}
-
+	
 	int i = 0;
 	while (cmd->argv[i] != NULL) i++;
 	cmd->argc = i;
+	
+	return cmd;
+}
+
+struct command* expand_sh_vars (struct command* cmd) {
+	for (int i = 1; i < cmd->argc; i++) {
+		char* arg = cmd->argv[i];
+		if (strcmp(arg, "$$") == 0) {
+			int curr_pid = getpid();
+			int digits = ceil(log10(curr_pid)) + 1;
+			
+			cmd->argv[i] = (char*) realloc(cmd->argv[i], sizeof(char) * digits);
+			sprintf(cmd->argv[i], "%d", curr_pid);
+		}
+	}
+
+	return cmd;
+}
+
+struct command* get_cmd() {
+	struct command* cmd = (struct command*) malloc(sizeof(struct command));
+	if (cmd == NULL) return NULL;
+	
+	printf(": ");
+
+	char* cmd_buf = (char*) malloc(sizeof(char) * 2049);
+	char* buffer = NULL;
+	size_t buffer_size = 0;
+	getline(&buffer, &buffer_size, stdin);
+	
+	if (strlen(buffer) == 1) return NULL;
+	strncpy(cmd_buf, buffer, 2048);
+	cmd_buf[strlen(cmd_buf) - 1] = '\0';
+	
+	parse_cmd_args(cmd, &cmd_buf);
+	free(cmd_buf);
+
+	if (strcmp(cmd->argv[cmd->argc - 1], "&") == 0) {
+		cmd->background = true;
+		cmd->argv[cmd->argc - 1] = NULL;
+		cmd->argc--;
+	}
+
+	parse_cmd_io_files(cmd);
+	expand_sh_vars(cmd);
 
 	return cmd;
 }
