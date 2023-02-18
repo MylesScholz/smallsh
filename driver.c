@@ -48,9 +48,11 @@ struct command* get_cmd() {
 	token = strtok_r(cmd_buf, " ", &saveptr);
 	cmd->cmd = (char*) malloc(sizeof(char) * (strlen(token) + 1));
 	strncpy(cmd->cmd, token, strlen(token) + 1);
+	cmd->argv[0] = (char*) malloc(sizeof(char) * (strlen(cmd->cmd) + 1));
+	strncpy(cmd->argv[0], cmd->cmd, strlen(cmd->cmd) + 1);
 
 	token = strtok_r(NULL, " ", &saveptr);
-	cmd->argc = 0;
+	cmd->argc = 1;
 	while (token != NULL) {
 		cmd->argv[cmd->argc] = (char*) malloc(sizeof(char) * (strlen(token) + 1));
 		strncpy(cmd->argv[cmd->argc], token, strlen(token) + 1);
@@ -59,7 +61,7 @@ struct command* get_cmd() {
 		token = strtok_r(NULL, " ", &saveptr);
 	}
 
-	for (int i = 0; i < cmd->argc - 1; i++) {
+	for (int i = 1; i < cmd->argc - 1; i++) {
 		char* arg = cmd->argv[i];
 		if (cmd->i_file == NULL && strcmp(arg, "<") == 0) {
 			int file_len = strlen(cmd->argv[i + 1]);
@@ -76,9 +78,11 @@ struct command* get_cmd() {
 		}
 	}
 
-	if (cmd->argc >= 1 && strcmp(cmd->argv[cmd->argc - 1], "&") == 0) {
+	if (strcmp(cmd->argv[cmd->argc - 1], "&") == 0) {
 		cmd->background = true;
 	}
+
+	cmd->argv[cmd->argc] = NULL;
 
 	return cmd;
 }
@@ -87,8 +91,8 @@ int cd(struct command* cmd) {
 	if (cmd == NULL) return -1;
 
 	int err;
-	if (cmd->argc > 0) {
-		err = chdir(cmd->argv[0]);
+	if (cmd->argc > 1) {
+		err = chdir(cmd->argv[1]);
 	} else {
 		err = chdir(getenv("HOME"));
 	}
@@ -101,9 +105,14 @@ int cd(struct command* cmd) {
 	return 0;
 }
 
+int status(struct command* cmd) {
+	printf("Status.\n");
+	return 0;
+}
+
 int main(int argc, char** argv) {
 	struct command* cmd;
-	int (*fptr) (struct command*);
+	char cmd_path[PATH_LEN_MAX];
 	int last_exit_status = 0;
 
 	while(true) {
@@ -120,18 +129,27 @@ int main(int argc, char** argv) {
 			continue;
 		}
 
-		if (strcmp(cmd->cmd, "cd") == 0) {
-			fptr = &cd;
-		}
-		
-		if (strcmp(cmd->cmd, "status") == 0) {
-			// TODO: status cmd
-		}
+		strcpy(cmd_path, "/bin/");
 
-		// TODO: undefined cmds
+		if (strcmp(cmd->cmd, "cd") == 0) {
+			strcpy(cmd_path, "cd");
+		} else if (strcmp(cmd->cmd, "status") == 0) {
+			strcpy(cmd_path, "status");
+			// TODO: implement status
+		} else {
+			strcat(cmd_path, cmd->cmd);
+
+			free(cmd->cmd);
+			cmd->cmd = (char*) malloc(sizeof(char) * (strlen(cmd_path) + 1));
+			strncpy(cmd->cmd, cmd_path, strlen(cmd_path) + 1);
+
+			free(cmd->argv[0]);
+			cmd->argv[0] = (char*) malloc(sizeof(char) * (strlen(cmd_path) + 1));
+			strncpy(cmd->argv[0], cmd_path, strlen(cmd_path) + 1);
+		}
 
 		pid_t spawn_pid = -5;
-		int child_pid, child_status, cmd_status;
+		int child_pid, child_status;
 		
 		spawn_pid = fork();
 		switch (spawn_pid) {
@@ -140,14 +158,13 @@ int main(int argc, char** argv) {
 				exit(1);
 				break;
 			case 0:
-				cmd_status = (*fptr) (cmd);
-				
-				if (cmd_status == -1) {
-					return EXIT_FAILURE;
-				}
-				return EXIT_SUCCESS;
+				execv(cmd->cmd, cmd->argv);
+
+				perror("execv");
+				return EXIT_FAILURE;
 				break;
 			default:
+				// TODO: handle background processes
 				child_pid = waitpid(spawn_pid, &child_status, 0);
 				
 				if (WIFEXITED(child_status)) {
