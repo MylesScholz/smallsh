@@ -106,13 +106,12 @@ int cd(struct command* cmd) {
 }
 
 int status(int last_exit_status) {
-	printf("Status.\n");
+	printf("Exit status %d\n", last_exit_status);
 	return 0;
 }
 
 int main(int argc, char** argv) {
 	struct command* cmd;
-	char cmd_path[PATH_LEN_MAX];
 	int last_exit_status = 0;
 
 	while(true) {
@@ -121,6 +120,7 @@ int main(int argc, char** argv) {
 		
 		if (strcmp(cmd->cmd, "exit") == 0) {
 			// TODO: kill all processes
+			free_command(cmd);
 			break;
 		}
 
@@ -141,17 +141,6 @@ int main(int argc, char** argv) {
 			continue;
 		}
 
-		strcpy(cmd_path, "/bin/");
-		strcat(cmd_path, cmd->cmd);
-
-		free(cmd->cmd);
-		cmd->cmd = (char*) malloc(sizeof(char) * (strlen(cmd_path) + 1));
-		strncpy(cmd->cmd, cmd_path, strlen(cmd_path) + 1);
-
-		free(cmd->argv[0]);
-		cmd->argv[0] = (char*) malloc(sizeof(char) * (strlen(cmd_path) + 1));
-		strncpy(cmd->argv[0], cmd_path, strlen(cmd_path) + 1);
-
 		pid_t spawn_pid = -5;
 		int child_pid, child_status;
 		
@@ -162,22 +151,15 @@ int main(int argc, char** argv) {
 				exit(1);
 				break;
 			case 0:
-				execv(cmd->cmd, cmd->argv);
+				execvp(cmd->cmd, cmd->argv);
 
-				perror("execv");
 				return EXIT_FAILURE;
 				break;
 			default:
 				// TODO: handle background processes
 				child_pid = waitpid(spawn_pid, &child_status, 0);
 				
-				if (WIFEXITED(child_status)) {
-					printf("Child exited normally with status %d.\n", WEXITSTATUS(child_status));
-					last_exit_status = WEXITSTATUS(child_status);
-				} else {
-					printf("Child exited abnormally by signal %d.\n", WTERMSIG(child_status));
-					last_exit_status = WEXITSTATUS(child_status);
-				}
+				last_exit_status = WEXITSTATUS(child_status);
 				break;
 		}
 
