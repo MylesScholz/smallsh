@@ -48,6 +48,7 @@ struct command* get_cmd() {
 	token = strtok_r(cmd_buf, " ", &saveptr);
 	cmd->cmd = (char*) malloc(sizeof(char) * (strlen(token) + 1));
 	strncpy(cmd->cmd, token, strlen(token) + 1);
+	
 	cmd->argv[0] = (char*) malloc(sizeof(char) * (strlen(cmd->cmd) + 1));
 	strncpy(cmd->argv[0], cmd->cmd, strlen(cmd->cmd) + 1);
 
@@ -61,28 +62,40 @@ struct command* get_cmd() {
 		token = strtok_r(NULL, " ", &saveptr);
 	}
 
+	if (strcmp(cmd->argv[cmd->argc - 1], "&") == 0) {
+		cmd->background = true;
+		cmd->argv[cmd->argc - 1] = NULL;
+	}
+
 	for (int i = 1; i < cmd->argc - 1; i++) {
 		char* arg = cmd->argv[i];
-		if (cmd->i_file == NULL && strcmp(arg, "<") == 0) {
+
+		if (strcmp(arg, "<") == 0) {
 			int file_len = strlen(cmd->argv[i + 1]);
 			if (file_len > FILE_NAME_MAX) file_len = FILE_NAME_MAX;
 
 			cmd->i_file = (char*) malloc(sizeof(char) * (file_len + 1));
 			strncpy(cmd->i_file, cmd->argv[i + 1], file_len + 1);
-		} else if (cmd->o_file == NULL && strcmp(arg, ">") == 0) {
+			
+			cmd->argv[i] = NULL;
+			cmd->argv[i + 1] = NULL;
+			i++;
+		} else if (strcmp(arg, ">") == 0) {
 			int file_len = strlen(cmd->argv[i + 1]);
 			if (file_len > FILE_NAME_MAX) file_len = FILE_NAME_MAX;
 
 			cmd->o_file = (char*) malloc(sizeof(char) * (file_len + 1));
 			strncpy(cmd->o_file, cmd->argv[i + 1], file_len + 1);
+			
+			cmd->argv[i] = NULL;
+			cmd->argv[i + 1] = NULL;
+			i++;
 		}
 	}
 
-	if (strcmp(cmd->argv[cmd->argc - 1], "&") == 0) {
-		cmd->background = true;
-	}
-
-	cmd->argv[cmd->argc] = NULL;
+	int i = 0;
+	while (cmd->argv[i] != NULL) i++;
+	cmd->argc = i;
 
 	return cmd;
 }
@@ -141,8 +154,12 @@ int main(int argc, char** argv) {
 			continue;
 		}
 
+		printf("cmd: %s\n", cmd->cmd);
+		for (int i = 0; i < cmd->argc; i++) printf("argv[%d]: %s\n", i, cmd->argv[i]);
+		printf("i_file: %s\no_file: %s\nbackground: %d\n", cmd->i_file, cmd->o_file, cmd->background);
+
 		pid_t spawn_pid = -5;
-		int child_pid, child_status;
+		int child_status;
 		
 		spawn_pid = fork();
 		switch (spawn_pid) {
@@ -156,10 +173,12 @@ int main(int argc, char** argv) {
 				return EXIT_FAILURE;
 				break;
 			default:
-				// TODO: handle background processes
-				child_pid = waitpid(spawn_pid, &child_status, 0);
-				
-				last_exit_status = WEXITSTATUS(child_status);
+				if (cmd->background) {
+					printf("Background pid = %d\n", spawn_pid);
+				} else {
+					waitpid(spawn_pid, &child_status, 0);
+					last_exit_status = WEXITSTATUS(child_status);
+				}
 				break;
 		}
 
