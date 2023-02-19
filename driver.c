@@ -35,6 +35,23 @@ void free_command(struct command* cmd) {
 	return;
 }
 
+void print_command(struct command* cmd) {
+	printf("\n");
+	if (cmd == NULL) {
+		printf("%p\n\n", cmd);
+		return;
+	}
+
+	printf("cmd: %s\n", cmd->cmd);
+	printf("argc: %d\nargv[]: ", cmd->argc);
+	for (int i = 0; i < cmd->argc; i++) {
+		printf("%s, ", cmd->argv[i]);
+	}
+	printf("\ni_file: %s\n", cmd->i_file);
+	printf("o_file: %s\n", cmd->o_file);
+	printf("background: %d\n\n", cmd->background);
+}
+
 struct command* parse_cmd_args(struct command* cmd, char** cmd_buf) {
 	char* token, * saveptr;
 	
@@ -72,6 +89,7 @@ struct command* parse_cmd_io_files(struct command* cmd) {
 	cmd->i_file = NULL;
 	cmd->o_file = NULL;
 
+	int args_removed = 0;
 	for (int i = 1; i < cmd->argc - 1; i++) {
 		char* arg = cmd->argv[i];
 
@@ -87,6 +105,7 @@ struct command* parse_cmd_io_files(struct command* cmd) {
 			free(cmd->argv[i + 1]);
 			cmd->argv[i + 1] = NULL;
 			i++;
+			args_removed += 2;
 		} else if (strcmp(arg, ">") == 0) {
 			int file_len = strlen(cmd->argv[i + 1]);
 			if (file_len > FILE_NAME_MAX) file_len = FILE_NAME_MAX;
@@ -99,6 +118,7 @@ struct command* parse_cmd_io_files(struct command* cmd) {
 			free(cmd->argv[i + 1]);
 			cmd->argv[i + 1] = NULL;
 			i++;
+			args_removed += 2;
 		}
 	}
 	
@@ -114,10 +134,8 @@ struct command* parse_cmd_io_files(struct command* cmd) {
 		}
 	}
 
-	int i = 0;
-	while (cmd->argv[i] != NULL) i++;
-	cmd->argc = i;
-	
+	cmd->argc -= args_removed;
+
 	return cmd;
 }
 
@@ -142,17 +160,13 @@ struct command* get_cmd() {
 	
 	printf(": ");
 	fflush(stdout);
-
-	char* buffer = NULL;
-	size_t buffer_size = 0;
-	getline(&buffer, &buffer_size, stdin);
-	
-	if (sigint_flag == 1 || strcmp(buffer, "") == 0 || strcmp(buffer, "\n") == 0) return NULL;
 	
 	char* cmd_buf = (char*) malloc(sizeof(char) * 2049);
-	strncpy(cmd_buf, buffer, 2048);
+	fgets(cmd_buf, 2049, stdin);
 	cmd_buf[strlen(cmd_buf) - 1] = '\0';
-	
+
+	if (sigint_flag == 1 || strcmp(cmd_buf, "") == 0 || strcmp(cmd_buf, "\n") == 0) return NULL;
+
 	parse_cmd_args(cmd, &cmd_buf);
 	parse_cmd_io_files(cmd);
 	expand_sh_vars(cmd);
@@ -222,34 +236,31 @@ void handle_SIGINT(int sig_num) {
 	sigint_flag = 1;
 	printf("\n");
 
+	/*
 	int stat, pid;
-	pid = wait(&stat);
+	pid = waitpid(-1, &stat, WNOHANG);
 	if (pid > 0) {
 		printf("\nChild exited with status %d.\n", stat);
 		fflush(stdout);
 		exit(EXIT_SUCCESS);
 	}
+	*/
 
 	return;
 }
 
 int main(int argc, char** argv) {
-	/*
-	struct sigaction ignore_action = {0}, SIGINT_action = {0};
-	ignore_action.sa_handler = SIG_IGN;
-	sigemptyset(&ignore_action.sa_mask);
-	sigaction(SIGINT, &ignore_action, NULL);
-	
+	struct sigaction SIGINT_action = {0};
 	SIGINT_action.sa_handler = &handle_SIGINT;
 	sigfillset(&SIGINT_action.sa_mask);
-	SIGINT_action.sa_flags = 0;	
-	*/
+	SIGINT_action.sa_flags = 0;
+	sigaction(SIGINT, &SIGINT_action, NULL);
 
 	struct command* cmd;
 	int last_exit_status = 0;
 
 	while(true) {
-		//sigint_flag = 0;
+		sigint_flag = 0;
 
 		int child_status, pid;
 		pid = waitpid(-1, &child_status, WNOHANG);
@@ -294,9 +305,7 @@ int main(int argc, char** argv) {
 				perror("");
 				exit(1);
 				break;
-			case 0:
-				//sigaction(SIGINT, &SIGINT_action, NULL);
-				
+			case 0:	
 				err = redirect_io(cmd);
 				if (err == -1) {
 					return EXIT_FAILURE;
