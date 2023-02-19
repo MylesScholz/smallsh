@@ -6,9 +6,12 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #define FILE_NAME_MAX 255
 #define PATH_LEN_MAX 4095
+
+static volatile sigint_flag = 0;
 
 struct command {
 	char* cmd;
@@ -99,6 +102,18 @@ struct command* parse_cmd_io_files(struct command* cmd) {
 		}
 	}
 	
+	if (cmd->background) {
+		if (cmd->i_file == NULL) {
+			cmd->i_file = (char*) malloc(sizeof(char) * 10);
+			strncpy(cmd->i_file, "/dev/null", 10);
+		}
+
+		if (cmd->o_file == NULL) {
+			cmd->o_file = (char*) malloc(sizeof(char) * 10);
+			strncpy(cmd->o_file, "/dev/null", 10);
+		}
+	}
+
 	int i = 0;
 	while (cmd->argv[i] != NULL) i++;
 	cmd->argc = i;
@@ -126,13 +141,13 @@ struct command* get_cmd() {
 	if (cmd == NULL) return NULL;
 	
 	printf(": ");
+	fflush(stdout);
 
 	char* buffer = NULL;
 	size_t buffer_size = 0;
 	getline(&buffer, &buffer_size, stdin);
-	fflush(stdin);
 	
-	if (strlen(buffer) == 1) return NULL;
+	if (sigint_flag == 1 || strcmp(buffer, "") == 0 || strcmp(buffer, "\n") == 0) return NULL;
 	
 	char* cmd_buf = (char*) malloc(sizeof(char) * 2049);
 	strncpy(cmd_buf, buffer, 2048);
@@ -203,13 +218,49 @@ int redirect_io(struct command* cmd) {
 	return 0;
 }
 
+void handle_SIGINT(int sig_num) {
+	sigint_flag = 1;
+	printf("\n");
+
+	int stat, pid;
+	pid = wait(&stat);
+	if (pid > 0) {
+		printf("\nChild exited with status %d.\n", stat);
+		fflush(stdout);
+		exit(EXIT_SUCCESS);
+	}
+
+	return;
+}
+
 int main(int argc, char** argv) {
+	/*
+	struct sigaction ignore_action = {0}, SIGINT_action = {0};
+	ignore_action.sa_handler = SIG_IGN;
+	sigemptyset(&ignore_action.sa_mask);
+	sigaction(SIGINT, &ignore_action, NULL);
+	
+	SIGINT_action.sa_handler = &handle_SIGINT;
+	sigfillset(&SIGINT_action.sa_mask);
+	SIGINT_action.sa_flags = 0;	
+	*/
+
 	struct command* cmd;
 	int last_exit_status = 0;
 
 	while(true) {
+		//sigint_flag = 0;
+
+		int child_status, pid;
+		pid = waitpid(-1, &child_status, WNOHANG);
+		if (pid > 0) {
+			printf("Background process (pid = %d) done. Exited with status %d.\n", pid, child_status);
+			fflush(stdout);
+			last_exit_status = child_status;
+		}
+
 		cmd = get_cmd();
-		if (cmd == NULL) continue;
+		if (cmd == NULL || sigint_flag == 1) continue;
 		
 		if (strcmp(cmd->cmd, "exit") == 0) {
 			// TODO: kill all processes
@@ -234,14 +285,8 @@ int main(int argc, char** argv) {
 			continue;
 		}
 
-		/*
-		printf("cmd: %s\n", cmd->cmd);
-		for (int i = 0; i < cmd->argc; i++) printf("argv[%d]: %s\n", i, cmd->argv[i]);
-		printf("i_file: %s\no_file: %s\nbackground: %d\n", cmd->i_file, cmd->o_file, cmd->background);
-		*/
-
 		pid_t spawn_pid = -5;
-		int child_status, err;
+		int err;
 		
 		spawn_pid = fork();
 		switch (spawn_pid) {
@@ -249,7 +294,9 @@ int main(int argc, char** argv) {
 				perror("");
 				exit(1);
 				break;
-			case 0:	
+			case 0:
+				//sigaction(SIGINT, &SIGINT_action, NULL);
+				
 				err = redirect_io(cmd);
 				if (err == -1) {
 					return EXIT_FAILURE;
@@ -262,6 +309,7 @@ int main(int argc, char** argv) {
 			default:
 				if (cmd->background) {
 					printf("Background pid = %d\n", spawn_pid);
+					fflush(stdout);
 				} else {
 					waitpid(spawn_pid, &child_status, 0);
 					last_exit_status = WEXITSTATUS(child_status);
