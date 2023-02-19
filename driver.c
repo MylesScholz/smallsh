@@ -5,6 +5,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 #define FILE_NAME_MAX 255
 #define PATH_LEN_MAX 4095
@@ -23,7 +24,7 @@ void free_command(struct command* cmd) {
 	for (int i = 0; i < cmd->argc; i++) {
 		free(cmd->argv[i]);
 	}
-	
+
 	free(cmd);
 	return;
 }
@@ -46,6 +47,14 @@ struct command* parse_cmd_args(struct command* cmd, char** cmd_buf) {
 		cmd->argc++;
 
 		token = strtok_r(NULL, " ", &saveptr);
+	}
+
+	if (strcmp(cmd->argv[cmd->argc - 1], "&") == 0) {
+		cmd->background = true;
+		cmd->argv[cmd->argc - 1] = NULL;
+		cmd->argc--;
+	} else {
+		cmd->background = false;
 	}
 
 	return cmd;
@@ -106,27 +115,21 @@ struct command* get_cmd() {
 	
 	printf(": ");
 
-	char* cmd_buf = (char*) malloc(sizeof(char) * 2049);
 	char* buffer = NULL;
 	size_t buffer_size = 0;
 	getline(&buffer, &buffer_size, stdin);
 	
 	if (strlen(buffer) == 1) return NULL;
+	
+	char* cmd_buf = (char*) malloc(sizeof(char) * 2049);
 	strncpy(cmd_buf, buffer, 2048);
 	cmd_buf[strlen(cmd_buf) - 1] = '\0';
 	
 	parse_cmd_args(cmd, &cmd_buf);
-	free(cmd_buf);
-
-	if (strcmp(cmd->argv[cmd->argc - 1], "&") == 0) {
-		cmd->background = true;
-		cmd->argv[cmd->argc - 1] = NULL;
-		cmd->argc--;
-	}
-
 	parse_cmd_io_files(cmd);
 	expand_sh_vars(cmd);
 
+	free(cmd_buf);
 	return cmd;
 }
 
@@ -150,6 +153,38 @@ int cd(struct command* cmd) {
 
 int status(int last_exit_status) {
 	printf("Exit status %d\n", last_exit_status);
+	return 0;
+}
+
+int redirect_io(struct command* cmd) {
+	if (cmd->i_file != NULL) {
+		int fd = open(cmd->i_file, O_RDONLY, 0640);
+		if (fd == -1) {
+			perror(cmd->i_file);
+			return -1;
+		}
+
+		int err = dup2(fd, STDIN_FILENO);
+		if (err == -1) {
+			perror("Redirect");
+			return -1;
+		}
+	}
+
+	if (cmd->o_file != NULL) {
+		int fd = open(cmd->o_file, O_WRONLY | O_TRUNC | O_CREAT, 0640);
+		if (fd == -1) {
+			perror(cmd->o_file);
+			return -1;
+		}
+
+		int err = dup2(fd, STDOUT_FILENO);
+		if (err == -1) {
+			perror("Redirect");
+			return -1;
+		}
+	}
+
 	return 0;
 }
 
@@ -184,12 +219,14 @@ int main(int argc, char** argv) {
 			continue;
 		}
 
+		/*
 		printf("cmd: %s\n", cmd->cmd);
 		for (int i = 0; i < cmd->argc; i++) printf("argv[%d]: %s\n", i, cmd->argv[i]);
 		printf("i_file: %s\no_file: %s\nbackground: %d\n", cmd->i_file, cmd->o_file, cmd->background);
+		*/
 
 		pid_t spawn_pid = -5;
-		int child_status;
+		int child_status, err;
 		
 		spawn_pid = fork();
 		switch (spawn_pid) {
@@ -198,6 +235,11 @@ int main(int argc, char** argv) {
 				exit(1);
 				break;
 			case 0:
+				err = redirect_io(cmd);
+				if (err == -1) {
+					return EXIT_FAILURE;
+				}
+
 				execvp(cmd->cmd, cmd->argv);
 
 				return EXIT_FAILURE;
