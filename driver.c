@@ -25,6 +25,9 @@ void free_command(struct command* cmd) {
 		free(cmd->argv[i]);
 	}
 
+	free(cmd->i_file);
+	free(cmd->o_file);
+
 	free(cmd);
 	return;
 }
@@ -51,6 +54,8 @@ struct command* parse_cmd_args(struct command* cmd, char** cmd_buf) {
 
 	if (strcmp(cmd->argv[cmd->argc - 1], "&") == 0) {
 		cmd->background = true;
+
+		free(cmd->argv[cmd->argc - 1]);
 		cmd->argv[cmd->argc - 1] = NULL;
 		cmd->argc--;
 	} else {
@@ -61,6 +66,9 @@ struct command* parse_cmd_args(struct command* cmd, char** cmd_buf) {
 }
 
 struct command* parse_cmd_io_files(struct command* cmd) {
+	cmd->i_file = NULL;
+	cmd->o_file = NULL;
+
 	for (int i = 1; i < cmd->argc - 1; i++) {
 		char* arg = cmd->argv[i];
 
@@ -71,7 +79,9 @@ struct command* parse_cmd_io_files(struct command* cmd) {
 			cmd->i_file = (char*) malloc(sizeof(char) * (file_len + 1));
 			strncpy(cmd->i_file, cmd->argv[i + 1], file_len + 1);
 			
+			free(cmd->argv[i]);
 			cmd->argv[i] = NULL;
+			free(cmd->argv[i + 1]);
 			cmd->argv[i + 1] = NULL;
 			i++;
 		} else if (strcmp(arg, ">") == 0) {
@@ -81,7 +91,9 @@ struct command* parse_cmd_io_files(struct command* cmd) {
 			cmd->o_file = (char*) malloc(sizeof(char) * (file_len + 1));
 			strncpy(cmd->o_file, cmd->argv[i + 1], file_len + 1);
 			
+			free(cmd->argv[i]);
 			cmd->argv[i] = NULL;
+			free(cmd->argv[i + 1]);
 			cmd->argv[i + 1] = NULL;
 			i++;
 		}
@@ -118,6 +130,7 @@ struct command* get_cmd() {
 	char* buffer = NULL;
 	size_t buffer_size = 0;
 	getline(&buffer, &buffer_size, stdin);
+	fflush(stdin);
 	
 	if (strlen(buffer) == 1) return NULL;
 	
@@ -158,7 +171,7 @@ int status(int last_exit_status) {
 
 int redirect_io(struct command* cmd) {
 	if (cmd->i_file != NULL) {
-		int fd = open(cmd->i_file, O_RDONLY, 0640);
+		int fd = open(cmd->i_file, O_RDONLY);
 		if (fd == -1) {
 			perror(cmd->i_file);
 			return -1;
@@ -169,10 +182,11 @@ int redirect_io(struct command* cmd) {
 			perror("Redirect");
 			return -1;
 		}
+		close(fd);
 	}
 
 	if (cmd->o_file != NULL) {
-		int fd = open(cmd->o_file, O_WRONLY | O_TRUNC | O_CREAT, 0640);
+		int fd = open(cmd->o_file, O_WRONLY | O_TRUNC | O_CREAT, 0770);
 		if (fd == -1) {
 			perror(cmd->o_file);
 			return -1;
@@ -183,6 +197,7 @@ int redirect_io(struct command* cmd) {
 			perror("Redirect");
 			return -1;
 		}
+		close(fd);
 	}
 
 	return 0;
@@ -234,7 +249,7 @@ int main(int argc, char** argv) {
 				perror("");
 				exit(1);
 				break;
-			case 0:
+			case 0:	
 				err = redirect_io(cmd);
 				if (err == -1) {
 					return EXIT_FAILURE;
