@@ -11,7 +11,7 @@
 #define FILE_NAME_MAX 255
 #define PATH_LEN_MAX 4095
 
-static volatile sigint_flag = 0;
+static volatile int sigint_flag = 0;
 
 struct command {
 	char* cmd;
@@ -50,6 +50,32 @@ void print_command(struct command* cmd) {
 	printf("\ni_file: %s\n", cmd->i_file);
 	printf("o_file: %s\n", cmd->o_file);
 	printf("background: %d\n\n", cmd->background);
+}
+
+char** expand_sh_vars (char** cmd_buf) {
+	int len = sizeof(*cmd_buf) / sizeof(*cmd_buf[0]);
+	char* buf_end = *cmd_buf + 2048;
+
+	char* ptr = strstr(*cmd_buf, "$$");
+	while (ptr != NULL) {	
+		char temp[2049];
+		strncpy(temp, ptr + 2, 2048);
+
+		int curr_pid = getpid();
+		int digits = ceil(log10(curr_pid));
+		char digit_str[digits + 1];
+		sprintf(digit_str, "%d", curr_pid);
+
+		strncpy(ptr, digit_str, buf_end - ptr - 1);
+		
+		if (ptr + digits - 1 < buf_end) {
+			strncpy(ptr + digits - 1, temp, buf_end - (ptr + digits - 1));
+		}
+		
+		ptr = strstr(*cmd_buf, "$$");
+	}
+
+	return cmd_buf;
 }
 
 struct command* parse_cmd_args(struct command* cmd, char** cmd_buf) {
@@ -139,21 +165,6 @@ struct command* parse_cmd_io_files(struct command* cmd) {
 	return cmd;
 }
 
-struct command* expand_sh_vars (struct command* cmd) {
-	for (int i = 1; i < cmd->argc; i++) {
-		char* arg = cmd->argv[i];
-		if (strcmp(arg, "$$") == 0) {
-			int curr_pid = getpid();
-			int digits = ceil(log10(curr_pid)) + 1;
-			
-			cmd->argv[i] = (char*) realloc(cmd->argv[i], sizeof(char) * digits);
-			sprintf(cmd->argv[i], "%d", curr_pid);
-		}
-	}
-
-	return cmd;
-}
-
 struct command* get_cmd() {
 	struct command* cmd = (struct command*) malloc(sizeof(struct command));
 	if (cmd == NULL) return NULL;
@@ -167,9 +178,9 @@ struct command* get_cmd() {
 
 	if (sigint_flag == 1 || strcmp(cmd_buf, "") == 0 || strcmp(cmd_buf, "\n") == 0) return NULL;
 
+	expand_sh_vars(&cmd_buf);
 	parse_cmd_args(cmd, &cmd_buf);
 	parse_cmd_io_files(cmd);
-	expand_sh_vars(cmd);
 
 	free(cmd_buf);
 	return cmd;
