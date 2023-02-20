@@ -294,13 +294,14 @@ void SIGINT_handler(int sig_num) {
 	return;
 }
 
-int main(int argc, char** argv) {	
+int main(int argc, char** argv) {
 	struct sigaction SIGTSTP_action = {0};
 	SIGTSTP_action.sa_handler = &SIGTSTP_handler;
 	sigfillset(&SIGTSTP_action.sa_mask);
 	SIGTSTP_action.sa_flags = 0;
 	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
-	
+
+	// TODO: replace SIGINT handling with SIGCHLD or SIGKILL, or switch back to SIG_IGN
 	struct sigaction SIGINT_action = {0};
 	SIGINT_action.sa_handler = &SIGINT_handler;
 	sigfillset(&SIGINT_action.sa_mask);
@@ -385,8 +386,8 @@ int main(int argc, char** argv) {
 			} else {
 				int child_status;
 				waitpid(spawn_pid, &child_status, 0);
-				tcflush(STDIN_FILENO, TCIFLUSH);
 				last_exit_status = WEXITSTATUS(child_status);
+				tcflush(STDIN_FILENO, TCIFLUSH);
 			}
 		}
 
