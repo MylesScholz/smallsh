@@ -286,14 +286,6 @@ void SIGTSTP_handler(int sig_num) {
 	return;
 }
 
-void SIGINT_handler(int sig_num) {
-	write(STDOUT_FILENO, "\nTerminated by signal 2.\n", 25);
-
-	last_exit_status = sig_num;
-	raise(SIG_DFL);
-	return;
-}
-
 int main(int argc, char** argv) {
 	struct sigaction SIGTSTP_action = {0};
 	SIGTSTP_action.sa_handler = &SIGTSTP_handler;
@@ -301,13 +293,6 @@ int main(int argc, char** argv) {
 	SIGTSTP_action.sa_flags = 0;
 	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
-	// TODO: replace SIGINT handling with SIGCHLD or SIGKILL, or switch back to SIG_IGN
-	struct sigaction SIGINT_action = {0};
-	SIGINT_action.sa_handler = &SIGINT_handler;
-	sigfillset(&SIGINT_action.sa_mask);
-	SIGINT_action.sa_flags = SA_RESTART;
-	sigaction(SIGINT, &SIGINT_action, NULL);
-	
 	struct command* cmd;
 
 	while(true) {
@@ -320,7 +305,12 @@ int main(int argc, char** argv) {
 		int bg_pid, bg_stat;
 		bg_pid = waitpid(-1, &bg_stat, WNOHANG);
 		if (bg_pid > 0) {
-			printf("Background process (pid = %d) done. Exit status %d.\n", bg_pid, bg_stat);
+			printf("Background process (pid = %d) done. ", bg_pid);
+			if (WIFSIGNALED(bg_stat) == true) {
+				printf("Terminated by signal %d.\n", WTERMSIG(bg_stat));
+			} else {
+				printf("Exit status %d.\n", WEXITSTATUS(bg_stat));
+			}
 			fflush(stdout);
 		}
 		
@@ -387,6 +377,9 @@ int main(int argc, char** argv) {
 				int child_status;
 				waitpid(spawn_pid, &child_status, 0);
 				last_exit_status = WEXITSTATUS(child_status);
+				if (WIFSIGNALED(child_status) == true) {
+					printf("\nTerminated by signal %d.\n", WTERMSIG(child_status));
+				}
 				tcflush(STDIN_FILENO, TCIFLUSH);
 			}
 		}
