@@ -11,7 +11,7 @@
 #define FILE_NAME_MAX 255
 #define PATH_LEN_MAX 4095
 
-static volatile int sigint_flag = 0;
+static volatile int last_exit_status = 0;
 
 struct command {
 	char* cmd;
@@ -52,8 +52,39 @@ void print_command(struct command* cmd) {
 	printf("background: %d\n\n", cmd->background);
 }
 
+// int_to_str
+// Converts an integer into a string
+// Parameters: the integer to be converted and a buffer to receive the output; the buffer is assumed to be large enough for the number
+// Returns: the string form of the integer
+char* int_to_str(int n, char* buffer) {
+	// i is the index of the first digit of the number
+	int i = 0;
+	// If the integer is negative, add a negative sign and step i to the next index
+	if (n < 0) buffer[i++] = "-";
+	
+	// j is the index of the last digit of the number; default j to zero
+	int j = 0;
+	// To avoid domain errors, check that the integer is greater than zero before calculating the number of digits in it
+	if (n > 0) j = (int) log10(n) + i;
+	
+	// Add a null-terminator to the string
+	buffer[j] = "\0";
+
+	// Loop through each digit of the integer from the right to left
+	while (j >= i) {
+		// Get the rightmost digit
+		int digit = n % 10;
+		// Increment the integer to the next digit
+		n /= 10;
+		// Convert the current digit into a character and add it to the string
+		buffer[j--] = (char) (digit + 48);
+	}
+
+	// Return the string of the number
+	return buffer;
+}
+
 char** expand_sh_vars (char** cmd_buf) {
-	int len = sizeof(*cmd_buf) / sizeof(*cmd_buf[0]);
 	char* buf_end = *cmd_buf + 2048;
 
 	char* ptr = strstr(*cmd_buf, "$$");
@@ -176,7 +207,7 @@ struct command* get_cmd() {
 	fgets(cmd_buf, 2049, stdin);
 	cmd_buf[strlen(cmd_buf) - 1] = '\0';
 
-	if (sigint_flag == 1 || strcmp(cmd_buf, "") == 0 || strcmp(cmd_buf, "\n") == 0) return NULL;
+	if (strcmp(cmd_buf, "") == 0) return NULL;
 
 	expand_sh_vars(&cmd_buf);
 	parse_cmd_args(cmd, &cmd_buf);
@@ -243,46 +274,40 @@ int redirect_io(struct command* cmd) {
 	return 0;
 }
 
-void handle_SIGINT(int sig_num) {
-	sigint_flag = 1;
-	printf("\n");
-
-	/*
+void SIGCHLD_handler(int sig_num) {
 	int stat, pid;
-	pid = waitpid(-1, &stat, WNOHANG);
-	if (pid > 0) {
-		printf("\nChild exited with status %d.\n", stat);
-		fflush(stdout);
-		exit(EXIT_SUCCESS);
-	}
-	*/
+	pid = waitpid(-1, &stat, 0);
+	
+	if (pid > 0 && stat != SIGINT) {
+		char pid_buf[50];
+		int_to_str(pid, pid_buf);
+		char stat_buf[10];
+		int_to_str(stat, stat_buf);
 
+		write(STDOUT_FILENO, "Background process (pid = ", 26);
+		write(STDOUT_FILENO, pid_buf, 50);
+		write(STDOUT_FILENO, ") done. Exited with status ", 27);
+		write(STDOUT_FILENO, stat_buf, 10);
+		write(STDOUT_FILENO, ".\n", 2);
+	}
+	
+	last_exit_status = stat;
+	return;
+}
+
+void SIGINT_handler(int sig_num) {
+	write(STDIN_FILENO, "\nCaught.\n", 9);
+	last_exit_status = sig_num;
+	exit(sig_num);
 	return;
 }
 
 int main(int argc, char** argv) {
-	struct sigaction SIGINT_action = {0};
-	SIGINT_action.sa_handler = &handle_SIGINT;
-	sigfillset(&SIGINT_action.sa_mask);
-	SIGINT_action.sa_flags = 0;
-	sigaction(SIGINT, &SIGINT_action, NULL);
-
 	struct command* cmd;
-	int last_exit_status = 0;
 
 	while(true) {
-		sigint_flag = 0;
-
-		int child_status, pid;
-		pid = waitpid(-1, &child_status, WNOHANG);
-		if (pid > 0) {
-			printf("Background process (pid = %d) done. Exited with status %d.\n", pid, child_status);
-			fflush(stdout);
-			last_exit_status = child_status;
-		}
-
 		cmd = get_cmd();
-		if (cmd == NULL || sigint_flag == 1) continue;
+		if (cmd == NULL) continue;
 		
 		if (strcmp(cmd->cmd, "exit") == 0) {
 			// TODO: kill all processes
@@ -307,8 +332,24 @@ int main(int argc, char** argv) {
 			continue;
 		}
 
+		struct sigaction SIGINT_action = {0};
+		if (cmd->background == true) {
+			SIGINT_action.sa_handler = SIG_IGN;
+		} else {
+			SIGINT_action.sa_handler = &SIGINT_handler;
+		}
+		sigfillset(&SIGINT_action.sa_mask);
+		SIGINT_action.sa_flags = SA_RESTART;
+		sigaction(SIGINT, &SIGINT_action, NULL);
+
+		struct sigaction SIGCHLD_action = {0};
+		SIGCHLD_action.sa_handler = &SIGCHLD_handler;
+		sigfillset(&SIGCHLD_action.sa_mask);
+		SIGCHLD_action.sa_flags = SA_RESTART;
+		sigaction(SIGCHLD, &SIGCHLD_action, NULL);
+	
 		pid_t spawn_pid = -5;
-		int err;
+		int child_status, err;
 		
 		spawn_pid = fork();
 		switch (spawn_pid) {
@@ -316,7 +357,7 @@ int main(int argc, char** argv) {
 				perror("");
 				exit(1);
 				break;
-			case 0:	
+			case 0:
 				err = redirect_io(cmd);
 				if (err == -1) {
 					return EXIT_FAILURE;
@@ -324,11 +365,12 @@ int main(int argc, char** argv) {
 
 				execvp(cmd->cmd, cmd->argv);
 
+				perror(cmd->cmd);
 				return EXIT_FAILURE;
 				break;
 			default:
 				if (cmd->background) {
-					printf("Background pid = %d\n", spawn_pid);
+					printf("Background process (pid = %d) created.\n", spawn_pid);
 					fflush(stdout);
 				} else {
 					waitpid(spawn_pid, &child_status, 0);
