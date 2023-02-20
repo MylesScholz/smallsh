@@ -54,6 +54,22 @@ void print_command(struct command* cmd) {
 	printf("background: %d\n\n", cmd->background);
 }
 
+int* delete_int(int i, int* i_list, int* n) {
+	int j = -1;
+	for (int k = 0; k < *n; k++) {
+		if (j != -1) {
+			i_list[j] = i_list[k];	
+			j++;
+		} else if (i_list[k] == i) {
+			j = k;
+		}
+	}
+
+	(*n)--;
+	i_list[*n] = 0;
+	return i_list;
+}
+
 // int_to_str
 // Converts an integer into a string
 // Parameters: the integer to be converted and a buffer to receive the output; the buffer is assumed to be large enough for the number
@@ -293,6 +309,9 @@ int main(int argc, char** argv) {
 	SIGTSTP_action.sa_flags = 0;
 	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
+	int* children = (int*) calloc(512, sizeof(int));
+	int n_children = 0;
+
 	struct command* cmd;
 
 	while(true) {
@@ -305,7 +324,9 @@ int main(int argc, char** argv) {
 		int bg_pid, bg_stat;
 		bg_pid = waitpid(-1, &bg_stat, WNOHANG);
 		if (bg_pid > 0) {
-			printf("Background process (pid = %d) done. ", bg_pid);
+			delete_int(bg_pid, children, &n_children);
+
+			printf("Background process (pid = %d) ended. ", bg_pid);
 			if (WIFSIGNALED(bg_stat) == true) {
 				printf("Terminated by signal %d.\n", WTERMSIG(bg_stat));
 			} else {
@@ -318,7 +339,10 @@ int main(int argc, char** argv) {
 		if (cmd == NULL) continue;
 
 		if (strcmp(cmd->cmd, "exit") == 0) {
-			// TODO: kill all children
+			for (int i = 0; i < n_children; i++) {
+				kill(children[i], SIGKILL);
+			}
+
 			free_command(cmd);
 			break;
 		}
@@ -371,6 +395,8 @@ int main(int argc, char** argv) {
 			sigprocmask(SIG_SETMASK, &sig_proc_mask, NULL);
 			
 			if (cmd->background) {
+				children[n_children++] = spawn_pid;
+				
 				printf("Background process (pid = %d) created.\n", spawn_pid);
 				fflush(stdout);
 			} else {
