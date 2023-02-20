@@ -12,6 +12,7 @@
 #define PATH_LEN_MAX 4095
 
 static volatile int last_exit_status = 0;
+static volatile bool fg_only_mode = false;
 
 struct command {
 	char* cmd;
@@ -275,8 +276,12 @@ int redirect_io(struct command* cmd) {
 }
 
 void SIGTSTP_handler(int sig_num) {
-	write(STDOUT_FILENO, "\nCaught.\n", 9);
-	exit(0);
+	if (fg_only_mode == false) {
+		write(STDOUT_FILENO, "\nEntering foreground-only mode (& disabled).\n", 45);
+	} else {
+		write(STDOUT_FILENO, "\nLeaving foreground-only mode (& enabled).\n", 43);
+	}
+	fg_only_mode = !fg_only_mode;
 	return;
 }
 
@@ -296,7 +301,7 @@ int main(int argc, char** argv) {
 	struct sigaction SIGTSTP_action = {0};
 	SIGTSTP_action.sa_handler = &SIGTSTP_handler;
 	sigfillset(&SIGTSTP_action.sa_mask);
-	SIGTSTP_action.sa_flags = SA_RESTART;
+	SIGTSTP_action.sa_flags = 0;
 	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 	
 	struct command* cmd;
@@ -313,7 +318,7 @@ int main(int argc, char** argv) {
 		if (cmd == NULL) continue;
 
 		if (strcmp(cmd->cmd, "exit") == 0) {
-			// TODO: kill all processes
+			// TODO: kill all children
 			free_command(cmd);
 			break;
 		}
@@ -333,6 +338,10 @@ int main(int argc, char** argv) {
 			status(last_exit_status);
 			free_command(cmd);
 			continue;
+		}
+
+		if (fg_only_mode == true && cmd->background == true) {
+			cmd->background = false;
 		}
 
 		struct sigaction SIGINT_action = {0};
