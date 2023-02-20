@@ -7,6 +7,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <termios.h>
 
 #define FILE_NAME_MAX 255
 #define PATH_LEN_MAX 4095
@@ -286,27 +287,35 @@ void SIGTSTP_handler(int sig_num) {
 }
 
 void SIGINT_handler(int sig_num) {
-	write(STDOUT_FILENO, "\nTerminated by signal ", 22);
-	char sig_buf[10];
-	int_to_str(sig_num, sig_buf);
-	write(STDOUT_FILENO, sig_buf, 10);
-	write(STDOUT_FILENO, ".\n", 2);
+	write(STDOUT_FILENO, "\nTerminated by signal 2.\n", 25);
 
 	last_exit_status = sig_num;
 	raise(SIG_DFL);
 	return;
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv) {	
 	struct sigaction SIGTSTP_action = {0};
 	SIGTSTP_action.sa_handler = &SIGTSTP_handler;
 	sigfillset(&SIGTSTP_action.sa_mask);
 	SIGTSTP_action.sa_flags = 0;
 	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 	
+	struct sigaction SIGINT_action = {0};
+	SIGINT_action.sa_handler = &SIGINT_handler;
+	sigfillset(&SIGINT_action.sa_mask);
+	SIGINT_action.sa_flags = SA_RESTART;
+	sigaction(SIGINT, &SIGINT_action, NULL);
+	
 	struct command* cmd;
 
 	while(true) {
+		// Block SIGINT
+		sigset_t sig_proc_mask;
+		sigemptyset(&sig_proc_mask);
+		sigaddset(&sig_proc_mask, SIGINT);
+		sigprocmask(SIG_SETMASK, &sig_proc_mask, NULL);
+
 		int bg_pid, bg_stat;
 		bg_pid = waitpid(-1, &bg_stat, WNOHANG);
 		if (bg_pid > 0) {
@@ -344,45 +353,41 @@ int main(int argc, char** argv) {
 			cmd->background = false;
 		}
 
-		struct sigaction SIGINT_action = {0};
-		if (cmd->background == true) {
-			SIGINT_action.sa_handler = SIG_IGN;
-		} else {
-			SIGINT_action.sa_handler = &SIGINT_handler;
-		}
-		sigfillset(&SIGINT_action.sa_mask);
-		SIGINT_action.sa_flags = SA_RESTART;
-		sigaction(SIGINT, &SIGINT_action, NULL);
-
-		pid_t spawn_pid = -5;
-		int child_status, err;
-		
-		spawn_pid = fork();
-		switch (spawn_pid) {
-			case -1:
-				perror("");
-				exit(1);
-				break;
-			case 0:
-				err = redirect_io(cmd);
-				if (err == -1) {
-					return EXIT_FAILURE;
-				}
-
-				execvp(cmd->cmd, cmd->argv);
-
-				perror(cmd->cmd);
+		pid_t spawn_pid = fork();
+		if (spawn_pid == -1) {
+			perror("");
+			return EXIT_FAILURE;
+		} else if (spawn_pid == 0) {
+			sigemptyset(&sig_proc_mask);
+			sigaddset(&sig_proc_mask, SIGTSTP);
+			if (cmd->background == true) {
+				sigaddset(&sig_proc_mask, SIGINT);
+			}
+			sigprocmask(SIG_SETMASK, &sig_proc_mask, NULL);
+			
+			int err = redirect_io(cmd);
+			if (err == -1) {
 				return EXIT_FAILURE;
-				break;
-			default:
-				if (cmd->background) {
-					printf("Background process (pid = %d) created.\n", spawn_pid);
-					fflush(stdout);
-				} else {
-					waitpid(spawn_pid, &child_status, 0);
-					last_exit_status = WEXITSTATUS(child_status);
-				}
-				break;
+			}
+
+			execvp(cmd->cmd, cmd->argv);
+
+			perror(cmd->cmd);
+			return EXIT_FAILURE;
+		} else {
+			sigemptyset(&sig_proc_mask);
+			sigaddset(&sig_proc_mask, SIGINT);
+			sigprocmask(SIG_SETMASK, &sig_proc_mask, NULL);
+			
+			if (cmd->background) {
+				printf("Background process (pid = %d) created.\n", spawn_pid);
+				fflush(stdout);
+			} else {
+				int child_status;
+				waitpid(spawn_pid, &child_status, 0);
+				tcflush(STDIN_FILENO, TCIFLUSH);
+				last_exit_status = WEXITSTATUS(child_status);
+			}
 		}
 
 		free_command(cmd);
