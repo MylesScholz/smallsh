@@ -274,41 +274,44 @@ int redirect_io(struct command* cmd) {
 	return 0;
 }
 
-void SIGCHLD_handler(int sig_num) {
-	int stat, pid;
-	pid = waitpid(-1, &stat, 0);
-	
-	if (pid > 0 && stat != SIGINT) {
-		char pid_buf[50];
-		int_to_str(pid, pid_buf);
-		char stat_buf[10];
-		int_to_str(stat, stat_buf);
-
-		write(STDOUT_FILENO, "Background process (pid = ", 26);
-		write(STDOUT_FILENO, pid_buf, 50);
-		write(STDOUT_FILENO, ") done. Exited with status ", 27);
-		write(STDOUT_FILENO, stat_buf, 10);
-		write(STDOUT_FILENO, ".\n", 2);
-	}
-	
-	last_exit_status = stat;
+void SIGTSTP_handler(int sig_num) {
+	write(STDOUT_FILENO, "\nCaught.\n", 9);
+	exit(0);
 	return;
 }
 
 void SIGINT_handler(int sig_num) {
-	write(STDIN_FILENO, "\nCaught.\n", 9);
+	write(STDOUT_FILENO, "\nTerminated by signal ", 22);
+	char sig_buf[10];
+	int_to_str(sig_num, sig_buf);
+	write(STDOUT_FILENO, sig_buf, 10);
+	write(STDOUT_FILENO, ".\n", 2);
+
 	last_exit_status = sig_num;
-	exit(sig_num);
+	raise(SIG_DFL);
 	return;
 }
 
 int main(int argc, char** argv) {
+	struct sigaction SIGTSTP_action = {0};
+	SIGTSTP_action.sa_handler = &SIGTSTP_handler;
+	sigfillset(&SIGTSTP_action.sa_mask);
+	SIGTSTP_action.sa_flags = SA_RESTART;
+	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+	
 	struct command* cmd;
 
 	while(true) {
+		int bg_pid, bg_stat;
+		bg_pid = waitpid(-1, &bg_stat, WNOHANG);
+		if (bg_pid > 0) {
+			printf("Background process (pid = %d) done. Exit status %d.\n", bg_pid, bg_stat);
+			fflush(stdout);
+		}
+		
 		cmd = get_cmd();
 		if (cmd == NULL) continue;
-		
+
 		if (strcmp(cmd->cmd, "exit") == 0) {
 			// TODO: kill all processes
 			free_command(cmd);
@@ -342,12 +345,6 @@ int main(int argc, char** argv) {
 		SIGINT_action.sa_flags = SA_RESTART;
 		sigaction(SIGINT, &SIGINT_action, NULL);
 
-		struct sigaction SIGCHLD_action = {0};
-		SIGCHLD_action.sa_handler = &SIGCHLD_handler;
-		sigfillset(&SIGCHLD_action.sa_mask);
-		SIGCHLD_action.sa_flags = SA_RESTART;
-		sigaction(SIGCHLD, &SIGCHLD_action, NULL);
-	
 		pid_t spawn_pid = -5;
 		int child_status, err;
 		
