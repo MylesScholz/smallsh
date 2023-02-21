@@ -9,9 +9,11 @@
 #include <signal.h>
 #include <termios.h>
 
+// Macros for the maximum file name length and path length
 #define FILE_NAME_MAX 255
 #define PATH_LEN_MAX 4095
 
+// A flag for foreground-only mode
 static volatile bool fg_only_mode = false;
 
 // struct command
@@ -137,7 +139,7 @@ char* int_to_str(int n, char* buffer) {
 // expand_sh_vars
 // Replaces all occurrences of $$ with the current pid in a given string
 // Parameters: a 2049-char string to perform the substitution on
-// Returns: the modified string
+// Returns: a pointer to the modified string
 char** expand_sh_vars (char** cmd_buf) {
     // A pointer to the end of the string
     char* buf_end = *cmd_buf + 2048;
@@ -172,80 +174,120 @@ char** expand_sh_vars (char** cmd_buf) {
 		ptr = strstr(*cmd_buf, "$$");
 	}
     
-    // Return the modified string
+    // Return a pointer to the modified string
 	return cmd_buf;
 }
 
+// parse_cmd_args
+// Reads space-separated arguments from a string and adds them to a command struct
+// Parameters: a pointer to a command struct to read into and a pointer to a string to read from
+// Returns: the modified command struct
 struct command* parse_cmd_args(struct command* cmd, char** cmd_buf) {
-	char* token, * saveptr;
+	// Char pointers for use with strtok_r()
+    char* token, * saveptr;
 	
+    // Read the first space-separated token (the command)
     token = strtok_r(*cmd_buf, " ", &saveptr);
+    // Allocate a string for the command and copy it from the token
 	cmd->cmd = (char*) malloc(sizeof(char) * (strlen(token) + 1));
 	strncpy(cmd->cmd, token, strlen(token) + 1);
 	
+    // Allocate a string for the first argument (the command) and copy it from the command string
 	cmd->argv[0] = (char*) malloc(sizeof(char) * (strlen(cmd->cmd) + 1));
 	strncpy(cmd->argv[0], cmd->cmd, strlen(cmd->cmd) + 1);
 
+    // Read the next space-separated token
 	token = strtok_r(NULL, " ", &saveptr);
+    // Start counting arguments
 	cmd->argc = 1;
 	while (token != NULL) {
+        // Allocate space for each argument and copy it from the current token
 		cmd->argv[cmd->argc] = (char*) malloc(sizeof(char) * (strlen(token) + 1));
 		strncpy(cmd->argv[cmd->argc], token, strlen(token) + 1);
+        // Increment the argument counter
 		cmd->argc++;
 
+        // Find the next space-separated token
 		token = strtok_r(NULL, " ", &saveptr);
 	}
 
+    // Check for an & argument at the end
 	if (strcmp(cmd->argv[cmd->argc - 1], "&") == 0) {
-		cmd->background = true;
+		// Register the command as a background process
+        cmd->background = true;
 
+        // Remove the & argument so it won't be passed to exec()
 		free(cmd->argv[cmd->argc - 1]);
 		cmd->argv[cmd->argc - 1] = NULL;
 		cmd->argc--;
 	} else {
+        // Otherwise, register the command as a foreground process
 		cmd->background = false;
 	}
 
+    // Return the pointer to the command struct
     return cmd;
 }
 
+// parse_cmd_io_files
+// Checks a command struct for I/O redirect arguments and
+// registers them separately from other arguments
+// Parameters: a pointer to a command struct
+// Returns: the modified command struct
 struct command* parse_cmd_io_files(struct command* cmd) {
-	cmd->i_file = NULL;
+	// Set the I/O files to NULL by default
+    cmd->i_file = NULL;
 	cmd->o_file = NULL;
 
+    // Count the number of arguments to remove (assuming >, <, and the file names should be removed)
 	int args_removed = 0;
+    // Loop from the first non-command argument to the penultimate argument
+    // (The last argument cannot be a valid I/O redirect sequence)
 	for (int i = 1; i < cmd->argc - 1; i++) {
-		char* arg = cmd->argv[i];
+		// Alias the current argument for clarity
+        char* arg = cmd->argv[i];
 
+        // Check whether the current argument is the start of an I/O redirect sequence
 		if (strcmp(arg, "<") == 0) {
+            // Assume the next argument is a file name; calculate its length up to the file name maximum
 			int file_len = strlen(cmd->argv[i + 1]);
 			if (file_len > FILE_NAME_MAX) file_len = FILE_NAME_MAX;
 
+            // Copy the next argument into the input file field of the command struct
 			cmd->i_file = (char*) malloc(sizeof(char) * (file_len + 1));
 			strncpy(cmd->i_file, cmd->argv[i + 1], file_len + 1);
 			
+            // Free the current argument (<) and the next one (the file name)
+            // This prevents exec() from taking the I/O redirect sequence as an argument
 			free(cmd->argv[i]);
 			cmd->argv[i] = NULL;
 			free(cmd->argv[i + 1]);
 			cmd->argv[i + 1] = NULL;
 			i++;
+            // Count two arguments to be removed from the argument count at the end
 			args_removed += 2;
 		} else if (strcmp(arg, ">") == 0) {
+            // Assume the next argument is a file name; calculate its length up to the file name maximum
 			int file_len = strlen(cmd->argv[i + 1]);
 			if (file_len > FILE_NAME_MAX) file_len = FILE_NAME_MAX;
 
+            // Copy the next argument into the output file field of the command struct
 			cmd->o_file = (char*) malloc(sizeof(char) * (file_len + 1));
 			strncpy(cmd->o_file, cmd->argv[i + 1], file_len + 1);
 			
+            // Free the current argument (>) and the next one (the file name)
+            // This prevents exec() from taking the I/O redirect sequence as an argument
 			free(cmd->argv[i]);
 			cmd->argv[i] = NULL;
 			free(cmd->argv[i + 1]);
 			cmd->argv[i + 1] = NULL;
 			i++;
+            // Count two arguments to be removed from the argument count at the end
 			args_removed += 2;
 		}
 	}
 	
+    // If the command is for a background process and no I/O redirect is given, default to /dev/null
 	if (cmd->background) {
 		if (cmd->i_file == NULL) {
 			cmd->i_file = (char*) malloc(sizeof(char) * 10);
@@ -258,108 +300,168 @@ struct command* parse_cmd_io_files(struct command* cmd) {
 		}
 	}
 
+    // Remove the arguments from the count of arguments
 	cmd->argc -= args_removed;
 
+    // Return a pointer to the modified command struct
 	return cmd;
 }
 
+// get_cmd
+// Reads a command from the user and parses it into a command struct
+// Parameters: none
+// Returns: a pointer to a filled command struct
 struct command* get_cmd() {
+    // Allocate space for the command struct; return NULL if this fails
 	struct command* cmd = (struct command*) calloc(1, sizeof(struct command));
 	if (cmd == NULL) return NULL;
 	
+    // Print the shell prompt
 	printf(": ");
 	fflush(stdout);
 	
+    // Allocate space for the maximum command size
 	char* cmd_buf = (char*) malloc(sizeof(char) * 2049);
+    // Buffer variables for use with getline()
 	char* buffer = NULL;
 	size_t buffer_size = 0;
+    // Get a line from stdin; return NULL if there is an error
 	getline(&buffer, &buffer_size, stdin);
     if (ferror(stdin) != 0) return NULL;
 
+    // Copy the user input into a buffer of the right size
     strncpy(cmd_buf, buffer, 2048);
+    // Remove the newline character
 	cmd_buf[strlen(cmd_buf) - 1] = '\0';
+    // If the resulting command string is empty, return NULL
 	if (strcmp(cmd_buf, "") == 0) return NULL;
 
+    // Replace $$ with the current pid
 	expand_sh_vars(&cmd_buf);
+    // Read the arguments into the command struct
 	parse_cmd_args(cmd, &cmd_buf);
+    // Check for I/O redirection
 	parse_cmd_io_files(cmd);
 
+    // Free the command string
 	free(cmd_buf);
+    // Return a pointer to the command struct
 	return cmd;
 }
 
+// cd
+// Changes the current working directory to HOME or a directory given by an argument
+// Parameters: a pointer to a non-empty command struct
+// Returns: 0 if successful, -1 on failure
 int cd(struct command* cmd) {
+    // If the command struct pointer is empty, return an error code
 	if (cmd == NULL) return -1;
-
-	int err;
+	
+    int err;    // An error-checking variable
+    // Check for an argument
 	if (cmd->argc > 1) {
+        // Try to change the current working directory to the argument provided
 		err = chdir(cmd->argv[1]);
 	} else {
+        // Try to change the current working directory to the directory in the HOME environment variable
 		err = chdir(getenv("HOME"));
 	}
 	
+    // Return an error code if the directory change failed
 	if (err == -1) {
 		perror("");
 		return -1;
 	}
 
+    // Otherwise, return a success code
 	return 0;
 }
 
-int status(int last_exit_status) {
-	if (WIFSIGNALED(last_exit_status) == true) {
+// status
+// Prints the exit status or termination signal of the last non-custom foreground process that ended
+// Parameters: an integer status code set by waitpid()
+// Returns: none
+void status(int last_exit_status) {
+	// Check if the last exit status was ended by a signal
+    if (WIFSIGNALED(last_exit_status) == true) {
+        // If so, print the termination signal
 		printf("Terminated by signal %d.\n", WTERMSIG(last_exit_status));
 	} else {
+        // Otherwise, print the exit status
 		printf("Exit status %d.\n", WEXITSTATUS(last_exit_status));
 	}
-	return 0;
+	return;
 }
 
+// redirect_io
+// Redirects stdin and stdout to the files specified in a given command struct
+// Parameters: a pointer to a non-empty command struct
+// Returns: 0 if successful, -1 on failure
 int redirect_io(struct command* cmd) {
+    // Check for a specified input file
 	if (cmd->i_file != NULL) {
+        // Try to open the specified input file for reading only; return an error code if unsuccessful
 		int fd = open(cmd->i_file, O_RDONLY);
 		if (fd == -1) {
 			perror(cmd->i_file);
 			return -1;
 		}
 
+        // Redirect stdin to the input file; return an error code if unsuccessful
 		int err = dup2(fd, STDIN_FILENO);
 		if (err == -1) {
 			perror("Redirect");
 			return -1;
 		}
+        // Close the input file descriptor
 		close(fd);
 	}
 
+    // Check for a specified output file
 	if (cmd->o_file != NULL) {
+        // Try to open the specified output file for writing only; truncate it if it exists; create it if not
+        // Return an error code if unsuccessful
 		int fd = open(cmd->o_file, O_WRONLY | O_TRUNC | O_CREAT, 0770);
 		if (fd == -1) {
 			perror(cmd->o_file);
 			return -1;
 		}
 
+        // Redirect stdout to the output file
 		int err = dup2(fd, STDOUT_FILENO);
 		if (err == -1) {
 			perror("Redirect");
 			return -1;
 		}
+        // Close the output file descriptor
 		close(fd);
 	}
 
+    // Return a success code
 	return 0;
 }
 
+// SIGTSTP_handler
+// A handler for SIGTSTP (Ctrl + Z); toggles foreground-only mode
+// Parameters: the triggering signal number
+// Returns: none
 void SIGTSTP_handler(int sig_num) {
-	if (fg_only_mode == false) {
+	// Print a different message depending on the current mode
+    if (fg_only_mode == false) {
 		write(STDOUT_FILENO, "\nEntering foreground-only mode (& disabled).\n", 45);
 	} else {
 		write(STDOUT_FILENO, "\nLeaving foreground-only mode (& enabled).\n", 43);
 	}
+    // Toggle the foreground-only mode flag
 	fg_only_mode = !fg_only_mode;
 	return;
 }
 
-int main(int argc, char** argv) {
+// main
+// The program driver; runs a miniature shell
+// Parameters: argc, the number of arguments; argv, a list of strings of arguments
+// Returns: an exit code
+int main(int argc, char** argv) { 
 	struct sigaction SIGTSTP_action = {0};
 	SIGTSTP_action.sa_handler = &SIGTSTP_handler;
 	sigfillset(&SIGTSTP_action.sa_mask);
