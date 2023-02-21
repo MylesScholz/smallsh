@@ -14,35 +14,52 @@
 
 static volatile bool fg_only_mode = false;
 
+// struct command
+// Holds command data
 struct command {
-	char* cmd;
-	int argc;
-	char* argv[512];
-	char* i_file, * o_file;
-	bool background;
+	char* cmd;                  // The command itself
+	int argc;                   // The number of arguments (counting the command)
+	char* argv[512];            // The arguments (including the command)
+	char* i_file, * o_file;     // The input and output files for I/O redirection
+	bool background;            // Whether the command should be a background process
 };
 
+// free_command
+// Frees heap memory allocated for a command struct
+// Parameters: a pointer to a command struct on the heap
+// Returns: none
 void free_command(struct command* cmd) {
+    // Free the command
 	free(cmd->cmd);
 
+    // Free the arguments
 	for (int i = 0; i < cmd->argc; i++) {
 		free(cmd->argv[i]);
 	}
 
+    // Free the I/O files
 	free(cmd->i_file);
 	free(cmd->o_file);
 
+    // Free the command struct
 	free(cmd);
 	return;
 }
 
+// print_command
+// Prints the data in a command struct; only used for debugging
+// Parameters: the command struct to be printed
+// Returns: none
 void print_command(struct command* cmd) {
 	printf("\n");
+
+    // Print a null pointer if the passed command is NULL
 	if (cmd == NULL) {
 		printf("%p\n\n", cmd);
 		return;
 	}
 
+    // Print the command data
 	printf("cmd: %s\n", cmd->cmd);
 	printf("argc: %d\nargv[]: ", cmd->argc);
 	for (int i = 0; i < cmd->argc; i++) {
@@ -53,19 +70,35 @@ void print_command(struct command* cmd) {
 	printf("background: %d\n\n", cmd->background);
 }
 
+// delete_int
+// Searches for and deletes an integer in an integer list, shifting other entries to fill the gap
+// Parameters: i, the integer to delete; i_list, a pointer to the integer list to delete from;
+//             n, a pointer to the number of elements in the integer list
+// Returns: a pointer to the integer list
 int* delete_int(int i, int* i_list, int* n) {
-	int j = -1;
+	// j will mark the index of i
+    // Initialize j to -1 to indicate that i has not been found yet
+    int j = -1;
+    // Loop through i_list
 	for (int k = 0; k < *n; k++) {
-		if (j != -1) {
-			i_list[j] = i_list[k];	
+		// Check if i has been found yet
+        if (j != -1) {
+            // At this point, j == k - 1
+            // Copy the current element (k) into the previous element (j)
+            // This erases i from the list and shifts all following elements to fill the gap
+			i_list[j] = i_list[k];
+            // Move j forward to ensure j == k - 1 on the next loop
 			j++;
 		} else if (i_list[k] == i) {
+            // i was found; set j to the current index
 			j = k;
 		}
 	}
 
+    // Reduce n and clear the space at the end
 	(*n)--;
 	i_list[*n] = 0;
+    // Return the list
 	return i_list;
 }
 
@@ -101,28 +134,45 @@ char* int_to_str(int n, char* buffer) {
 	return buffer;
 }
 
+// expand_sh_vars
+// Replaces all occurrences of $$ with the current pid in a given string
+// Parameters: a 2049-char string to perform the substitution on
+// Returns: the modified string
 char** expand_sh_vars (char** cmd_buf) {
-	char* buf_end = *cmd_buf + 2048;
+    // A pointer to the end of the string
+    char* buf_end = *cmd_buf + 2048;
 
+    // Find the first occurrence of $$
 	char* ptr = strstr(*cmd_buf, "$$");
-	while (ptr != NULL) {	
+	// Loop until no more $$ are found
+    while (ptr != NULL) {
+        // Save a copy of the rest of cmd_buf after the current $$
 		char temp[2049];
 		strncpy(temp, ptr + 2, 2048);
 
+        // Get the current pid and convert it to a string
 		int curr_pid = getpid();
-		int digits = ceil(log10(curr_pid)) + 1;
-		char digit_str[digits + 1];
-		sprintf(digit_str, "%d", curr_pid);
+		int digits = ceil(log10(curr_pid)) + 1;     // A calculation of the number of digits of the pid
+		char digit_str[digits + 1];                 // A buffer to receive the pid as a string
+		sprintf(digit_str, "%d", curr_pid);         // Print to the pid buffer from the integer pid
 
+        // Copy the string pid into cmd_buf up to the end
+        // buf_end - ptr - 1 is the number of chars between ptr and the end of cmd_buf
 		strncpy(ptr, digit_str, buf_end - ptr - 1);
 		
+        // Check whether the last statement ran into the end of cmd_buf
 		if (ptr + digits - 1 < buf_end) {
+            // Copy the rest of cmd_buf after the pid
+            // buf_end - (ptr + digits - 1) is the number of chars 
+            // between the end of the pid string and the end of cmd_buf
 			strncpy(ptr + digits - 1, temp, buf_end - (ptr + digits - 1));
 		}
 		
+        // Find the next occurrence of $$
 		ptr = strstr(*cmd_buf, "$$");
 	}
-
+    
+    // Return the modified string
 	return cmd_buf;
 }
 
