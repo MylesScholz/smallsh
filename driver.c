@@ -12,7 +12,6 @@
 #define FILE_NAME_MAX 255
 #define PATH_LEN_MAX 4095
 
-static volatile int last_exit_status = 0;
 static volatile bool fg_only_mode = false;
 
 struct command {
@@ -47,7 +46,7 @@ void print_command(struct command* cmd) {
 	printf("cmd: %s\n", cmd->cmd);
 	printf("argc: %d\nargv[]: ", cmd->argc);
 	for (int i = 0; i < cmd->argc; i++) {
-		printf("%s, ", cmd->argv[i]);
+		printf("%s (%d chars), ", cmd->argv[i], strlen(cmd->argv[i]) + 1);
 	}
 	printf("\ni_file: %s\n", cmd->i_file);
 	printf("o_file: %s\n", cmd->o_file);
@@ -111,7 +110,7 @@ char** expand_sh_vars (char** cmd_buf) {
 		strncpy(temp, ptr + 2, 2048);
 
 		int curr_pid = getpid();
-		int digits = ceil(log10(curr_pid));
+		int digits = ceil(log10(curr_pid)) + 1;
 		char digit_str[digits + 1];
 		sprintf(digit_str, "%d", curr_pid);
 
@@ -130,7 +129,7 @@ char** expand_sh_vars (char** cmd_buf) {
 struct command* parse_cmd_args(struct command* cmd, char** cmd_buf) {
 	char* token, * saveptr;
 	
-	token = strtok_r(*cmd_buf, " ", &saveptr);
+    token = strtok_r(*cmd_buf, " ", &saveptr);
 	cmd->cmd = (char*) malloc(sizeof(char) * (strlen(token) + 1));
 	strncpy(cmd->cmd, token, strlen(token) + 1);
 	
@@ -157,7 +156,7 @@ struct command* parse_cmd_args(struct command* cmd, char** cmd_buf) {
 		cmd->background = false;
 	}
 
-	return cmd;
+    return cmd;
 }
 
 struct command* parse_cmd_io_files(struct command* cmd) {
@@ -215,16 +214,20 @@ struct command* parse_cmd_io_files(struct command* cmd) {
 }
 
 struct command* get_cmd() {
-	struct command* cmd = (struct command*) malloc(sizeof(struct command));
+	struct command* cmd = (struct command*) calloc(1, sizeof(struct command));
 	if (cmd == NULL) return NULL;
 	
 	printf(": ");
 	fflush(stdout);
 	
 	char* cmd_buf = (char*) malloc(sizeof(char) * 2049);
-	fgets(cmd_buf, 2049, stdin);
-	cmd_buf[strlen(cmd_buf) - 1] = '\0';
+	char* buffer = NULL;
+	size_t buffer_size = 0;
+	getline(&buffer, &buffer_size, stdin);
+    if (ferror(stdin) != 0) return NULL;
 
+    strncpy(cmd_buf, buffer, 2048);
+	cmd_buf[strlen(cmd_buf) - 1] = '\0';
 	if (strcmp(cmd_buf, "") == 0) return NULL;
 
 	expand_sh_vars(&cmd_buf);
@@ -254,7 +257,11 @@ int cd(struct command* cmd) {
 }
 
 int status(int last_exit_status) {
-	printf("Exit status %d\n", last_exit_status);
+	if (WIFSIGNALED(last_exit_status) == true) {
+		printf("Terminated by signal %d.\n", WTERMSIG(last_exit_status));
+	} else {
+		printf("Exit status %d.\n", WEXITSTATUS(last_exit_status));
+	}
 	return 0;
 }
 
@@ -306,11 +313,12 @@ int main(int argc, char** argv) {
 	struct sigaction SIGTSTP_action = {0};
 	SIGTSTP_action.sa_handler = &SIGTSTP_handler;
 	sigfillset(&SIGTSTP_action.sa_mask);
-	SIGTSTP_action.sa_flags = 0;
+	SIGTSTP_action.sa_flags = SA_RESTART;
 	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
 	int* children = (int*) calloc(512, sizeof(int));
 	int n_children = 0;
+    int last_exit_status;
 
 	struct command* cmd;
 
@@ -347,7 +355,7 @@ int main(int argc, char** argv) {
 			break;
 		}
 
-		if (strcmp(cmd->cmd, "#") == 0) {
+		if (strchr(cmd->cmd, '#') == cmd->cmd) {
 			free_command(cmd);
 			continue;
 		}
@@ -385,7 +393,7 @@ int main(int argc, char** argv) {
 				return EXIT_FAILURE;
 			}
 
-			execvp(cmd->cmd, cmd->argv);
+            execvp(cmd->cmd, cmd->argv);
 
 			perror(cmd->cmd);
 			return EXIT_FAILURE;
@@ -402,7 +410,7 @@ int main(int argc, char** argv) {
 			} else {
 				int child_status;
 				waitpid(spawn_pid, &child_status, 0);
-				last_exit_status = WEXITSTATUS(child_status);
+				last_exit_status = child_status;
 				if (WIFSIGNALED(child_status) == true) {
 					printf("\nTerminated by signal %d.\n", WTERMSIG(child_status));
 				}
