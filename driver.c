@@ -461,31 +461,45 @@ void SIGTSTP_handler(int sig_num) {
 // The program driver; runs a miniature shell
 // Parameters: argc, the number of arguments; argv, a list of strings of arguments
 // Returns: an exit code
-int main(int argc, char** argv) { 
+int main(int argc, char** argv) {
+    // Create a sigaction struct for custom SIGTSTP handling
 	struct sigaction SIGTSTP_action = {0};
+    // Attach the custom handler
 	SIGTSTP_action.sa_handler = &SIGTSTP_handler;
+    // Block all other signals while executing the handler
 	sigfillset(&SIGTSTP_action.sa_mask);
+    // Restart interrupted system calls (such as read())
 	SIGTSTP_action.sa_flags = SA_RESTART;
+    // Register the custom sigaction struct
 	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
+    // A list to keep track of the pids of background child processes
 	int* children = (int*) calloc(512, sizeof(int));
+    // The number of background child processes
 	int n_children = 0;
-    int last_exit_status;
+    // A tracker for the status of the last foreground process
+    int last_exit_status = 0;
 
+    // A pointer to receive command structs
 	struct command* cmd;
 
+    // The program loop; the infinite loop is broken internally
 	while(true) {
-		// Block SIGINT
-		sigset_t sig_proc_mask;
-		sigemptyset(&sig_proc_mask);
-		sigaddset(&sig_proc_mask, SIGINT);
+		// Block the process from receiving SIGINT
+		sigset_t sig_proc_mask;             // A set of signals to be masked (blocked)
+		sigemptyset(&sig_proc_mask);        // Empty the mask
+		sigaddset(&sig_proc_mask, SIGINT);  // Add SIGINT to the mask
+        // Set the process signal mask to the set just made (only SIGINT)
 		sigprocmask(SIG_SETMASK, &sig_proc_mask, NULL);
 
+        // Check for background child processes that have ended; don't pause execution (WNOHANG)
 		int bg_pid, bg_stat;
 		bg_pid = waitpid(-1, &bg_stat, WNOHANG);
 		if (bg_pid > 0) {
+            // Delete the pid of the ended process from the list of active background processes
 			delete_int(bg_pid, children, &n_children);
 
+            // Print an appropriate message about the ended process
 			printf("Background process (pid = %d) ended. ", bg_pid);
 			if (WIFSIGNALED(bg_stat) == true) {
 				printf("Terminated by signal %d.\n", WTERMSIG(bg_stat));
@@ -495,84 +509,116 @@ int main(int argc, char** argv) {
 			fflush(stdout);
 		}
 		
+        // Get a command from the user; loop again if it is NULL
 		cmd = get_cmd();
 		if (cmd == NULL) continue;
 
+        // Check for an exit command
 		if (strcmp(cmd->cmd, "exit") == 0) {
+            // Kill all active background child processes
 			for (int i = 0; i < n_children; i++) {
 				kill(children[i], SIGKILL);
 			}
-
+            // Free the command struct and break the loop
 			free_command(cmd);
 			break;
 		}
 
+        // Check for a comment (beginning with #); loop again if so
 		if (strchr(cmd->cmd, '#') == cmd->cmd) {
 			free_command(cmd);
 			continue;
 		}
 
+        // Check for a cd command
 		if (strcmp(cmd->cmd, "cd") == 0) {
-			cd(cmd);
+			// Call the custom cd function
+            cd(cmd);
+            // Free the command struct and loop again
 			free_command(cmd);
 			continue;
 		}
 
+        // Check for a status command
 		if (strcmp(cmd->cmd, "status") == 0) {
-			status(last_exit_status);
+			// Call the custom status function
+            status(last_exit_status);
+            // Free the command struct and loop again
 			free_command(cmd);
 			continue;
 		}
 
+        // Disable background processes if in foreground-only mode
 		if (fg_only_mode == true && cmd->background == true) {
 			cmd->background = false;
 		}
 
+        // Create a child process; print an error if this fails (spawn_pid == -1)
 		pid_t spawn_pid = fork();
 		if (spawn_pid == -1) {
 			perror("");
 			return EXIT_FAILURE;
 		} else if (spawn_pid == 0) {
-			sigemptyset(&sig_proc_mask);
-			sigaddset(&sig_proc_mask, SIGTSTP);
+            // The child process
+            // Block SIGTSTP in all child processes
+            // Block SIGINT if the child process is a background process
+			sigemptyset(&sig_proc_mask);            // Empty the mask signal set
+			sigaddset(&sig_proc_mask, SIGTSTP);     // Add SIGTSTP to the mask
 			if (cmd->background == true) {
-				sigaddset(&sig_proc_mask, SIGINT);
+				sigaddset(&sig_proc_mask, SIGINT);  // Add SIGINT to the mask
 			}
+            // Set the process signal mask for this child process
 			sigprocmask(SIG_SETMASK, &sig_proc_mask, NULL);
 			
+            // Try to redirect I/O; return an error code if unsuccessful
 			int err = redirect_io(cmd);
 			if (err == -1) {
 				return EXIT_FAILURE;
 			}
 
+            // Execute the command, searching the directory indicated by
+            // the PATH environment variable for programs if necessary
             execvp(cmd->cmd, cmd->argv);
 
+            // If exec() returns, the command failed; print an error and return an error code
 			perror(cmd->cmd);
 			return EXIT_FAILURE;
 		} else {
-			sigemptyset(&sig_proc_mask);
-			sigaddset(&sig_proc_mask, SIGINT);
+            // The parent process
+            // Block SIGINT in the parent process to keep the shell running
+			sigemptyset(&sig_proc_mask);        // Empty the mask
+			sigaddset(&sig_proc_mask, SIGINT);  // Add SIGINT to the mask
+            // Set the process signal mask; implicitly, this enables SIGTSTP
 			sigprocmask(SIG_SETMASK, &sig_proc_mask, NULL);
 			
+            // Check if the command was for a background process
 			if (cmd->background) {
+                // Add the background child pid to the list of active background child processes
 				children[n_children++] = spawn_pid;
 				
+                // Print a message about the created background process
 				printf("Background process (pid = %d) created.\n", spawn_pid);
 				fflush(stdout);
 			} else {
+                // Wait for the foreground child to finish and get its status
 				int child_status;
 				waitpid(spawn_pid, &child_status, 0);
+                // Update the tracker for the status of the last ended foreground process
 				last_exit_status = child_status;
+                // If the child process was ended by a signal, print a message about it
 				if (WIFSIGNALED(child_status) == true) {
 					printf("\nTerminated by signal %d.\n", WTERMSIG(child_status));
 				}
+                // Flush any input read by the terminal while the foreground child process was running
 				tcflush(STDIN_FILENO, TCIFLUSH);
 			}
 		}
 
+        // Free the command struct
 		free_command(cmd);
 	}
 
+    // If execution reaches this point, the exit command was given; return a success code
 	return EXIT_SUCCESS;
 }
 
